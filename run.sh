@@ -1,0 +1,78 @@
+#!/bin/bash
+
+export PYTHONUNBUFFERED=1
+
+# Base output directory for experiment artifacts
+experiments_base_dir="./experiments"
+
+# Generate timestamp-based directory to store results (prevents overwriting)
+timestamp=$(date +"%Y%m%d%H%M")
+
+# Experiment configuration parameters
+num_clients_list="10"
+dataset_list=("gtsrb" "mnist" "cifar10")
+model_list=("resnet18" "lenet" "resnet18")
+
+dataset_list=("mnist" "cifar10" "gtsrb")
+model_list=("lenet" "resnet18" "resnet18")
+echo -e "===== 实验标记 ===== \n ${timestamp}"
+
+length=${#model_list[@]}
+batch_size=64
+
+for ((i=0; i<length; i++)); do
+
+    model=${model_list[i]}
+    dataset=${dataset_list[i]}
+
+    for num_clients in $num_clients_list; do
+
+            experiments_dir="${experiments_base_dir}/${timestamp}/${dataset}/${model}/clients_${num_clients}"
+
+            # Set the learning rate
+            if [ "$dataset" = "mnist" ]; then
+                learning_rate=0.1
+            else
+                learning_rate=0.01
+            fi            
+        
+            # step1
+            start_time=$(date +%s.%N)
+            python3 step1_training.py \
+                --num_clients $num_clients \
+                --experiments_dir $experiments_dir \
+                --dataset $dataset \
+                --model $model \
+                --batch_size $batch_size \
+                --learning_rate $learning_rate \
+                --num_rounds 10
+            end_time=$(date +%s.%N)
+            run_time=$(echo "$end_time - $start_time" | bc)
+            echo "step1 execution time: $run_time 秒"   
+
+
+            # step2
+            start_time=$(date +%s.%N)
+            python3 step2_gen_watermarks.py \
+                --num_clients $num_clients \
+                --experiments_dir $experiments_dir \
+                --dataset $dataset \
+                --batch_size $batch_size \
+                --model $model
+            end_time=$(date +%s.%N)
+            run_time=$(echo "$end_time - $start_time" | bc)
+            echo "step2 execution time: $run_time 秒"  
+
+
+            # step3
+            start_time=$(date +%s.%N)
+            python3 step3_verification.py \
+                --num_clients $num_clients \
+                --experiments_dir $experiments_dir \
+                --dataset $dataset \
+                --model $model
+            end_time=$(date +%s.%N)
+            run_time=$(echo "$end_time - $start_time" | bc)
+            echo "step3 execution time: $run_time 秒"             
+    done
+done
