@@ -9,12 +9,10 @@ experiments_base_dir="./experiments"
 timestamp=$(date +"%Y%m%d%H%M")
 
 # Experiment configuration parameters
-num_clients_list="10"
+num_clients_list="10 20 40 60 80"
 dataset_list=("gtsrb" "mnist" "cifar10")
 model_list=("resnet18" "lenet" "resnet18")
 
-dataset_list=("mnist" "cifar10" "gtsrb")
-model_list=("lenet" "resnet18" "resnet18")
 echo -e "===== 实验标记 ===== \n ${timestamp}"
 
 length=${#model_list[@]}
@@ -45,7 +43,7 @@ for ((i=0; i<length; i++)); do
                 --model $model \
                 --batch_size $batch_size \
                 --learning_rate $learning_rate \
-                --num_rounds 10
+                --num_rounds 20
             end_time=$(date +%s.%N)
             run_time=$(echo "$end_time - $start_time" | bc)
             echo "step1 execution time: $run_time 秒"   
