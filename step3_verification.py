@@ -33,16 +33,16 @@ def load_model(method: str, num_classes, checkpoint_dir, client_id: int = 0, dev
         # Load client model
         if method == "SL":
             client_path = f"{checkpoint_dir}/client_model.pt"
+            server_path = f"{checkpoint_dir}/server_model.pt"
         elif method == "PSL":
             client_path = f"{checkpoint_dir}/client_{client_id}_model.pt"
+            server_path = f"{checkpoint_dir}/server_model.pt"
         else:  # SFL
             client_path = f"{checkpoint_dir}/global_client_model.pt"
+            server_path = f"{checkpoint_dir}/global_server_model.pt"
 
         client_ckpt = torch.load(client_path, map_location=device)
         client_model.load_state_dict(client_ckpt["model_state_dict"])
-
-        # Load server model
-        server_path = f"{checkpoint_dir}/server_model.pt"
 
         server_ckpt = torch.load(server_path, map_location=device)
         server_model.load_state_dict(server_ckpt["model_state_dict"])
