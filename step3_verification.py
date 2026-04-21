@@ -10,6 +10,7 @@ import argparse
 import torch
 import torch.nn as nn
 import numpy as np
+import csv
 from typing import Dict
 
 from utils.model_utils import get_models
@@ -99,6 +100,26 @@ def verify_clean(model, clean_imgs, true_labels, method: str, device=None):
 
     return correct / total
 
+# Helper function for writing to CSV files
+def save_result_to_csv(filepath, dataset, model, num_clients, attack_type, method, wm_acc, clean_acc):
+    """Append results to CSV file"""
+    file_exists = os.path.isfile(filepath)
+    
+    wm_acc_str = f"{wm_acc * 100:.2f}"
+    clean_acc_str = f"{clean_acc * 100:.2f}"
+    
+    header = ['Dataset', 'Model', 'Num_Clients', 'Attack_Method', 'Method', 'Watermark_Acc', 'Clean_Acc']
+    row = [dataset, model, num_clients, attack_type, method, wm_acc_str, clean_acc_str]
+    
+    try:
+        os.makedirs(os.path.dirname(filepath), exist_ok=True) # Ensure dir exists
+        with open(filepath, mode='a', newline='', encoding='utf-8') as f:
+            writer = csv.writer(f)
+            if not file_exists:
+                writer.writerow(header)
+            writer.writerow(row)
+    except Exception as e:
+        print(f"Error writing to CSV: {e}")
 
 # ============== Main ==============
 def main():
@@ -108,6 +129,7 @@ def main():
     parser.add_argument("--data_dir", type=str, default="./data")
     parser.add_argument("--model", type=str, required=True)
     parser.add_argument("--dataset", type=str, required=True)
+    parser.add_argument("--attack_type", type=str, default="pgd")
     args = parser.parse_args()
 
     print(f"\n{'='*50}")
@@ -132,13 +154,15 @@ def main():
     methods = ["FL", "SL", "PSL", "SFL"]
     results = {}
 
+    csv_file_path = os.path.join(args.experiments_dir, '..', '..', '..', 'result.csv')
+
     for method in methods:
         print(f"\n{'='*60}")
-        print(f"Verifying: {method}")
+        print(f"Verifying: {method} | Attack: {args.attack_type}")
         print(f"{'='*60}")
 
         # Load watermark data
-        watermark_dir = os.path.join(args.experiments_dir, "watermarks", method)
+        watermark_dir = os.path.join(args.experiments_dir, "watermarks", args.attack_type, method )
         checkpoint_dir = os.path.join(args.experiments_dir, "checkpoints", method)
 
         try:
@@ -190,6 +214,31 @@ def main():
         print(f"    Watermark Success Rate: {avg_watermark*100:.2f}%")
         print(f"    Clean Accuracy:         {avg_clean*100:.2f}%")
 
+        if len(watermark_rates) > 0:
+            avg_watermark = np.mean(watermark_rates)
+            avg_clean = np.mean(clean_accs)
+            
+            results[method] = {
+                'watermark': avg_watermark,
+                'clean': avg_clean
+            }
+            
+            print(f"\nAverage: Watermark={avg_watermark*100:.2f}%, Clean={avg_clean*100:.2f}%")
+
+            save_result_to_csv(
+                csv_file_path, 
+                args.dataset, 
+                args.model, 
+                args.num_clients, 
+                args.attack_type,
+                method, 
+                avg_watermark, 
+                avg_clean
+            )
+            print(f"Results appended to {csv_file_path}")
+        else:
+            print(f"No valid verification results for {method}")
+    
     # Print summary
     print(f"\n{'='*60}")
     print("Summary")

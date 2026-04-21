@@ -2,7 +2,7 @@
 Step 2: Generate Watermarks for Distributed Learning Models
 
 Generates targeted adversarial examples (watermarks) for each client across
-FL, SL, PSL, and SFL frameworks. Uses masked PGD attacks to create
+FL, SL, PSL, and SFL frameworks. Uses soft-mask-based attacks to create
 client-specific watermarks that are saved for later verification.
 """
 
@@ -15,10 +15,18 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader, Subset
 from torchvision import datasets, transforms
-import copy
+import inspect
 
 from utils.model_utils import get_models
 from utils.dataset_utils import get_dataset
+from utils.soft_mask_watermark import get_attack_func
+
+# ============== Utility Function ==============
+def call_attack(func, **kwargs):
+    """Only pass the parameters required by the attack function to avoid parameter mismatch errors."""
+    sig = inspect.signature(func)
+    valid_args = {k: v for k, v in kwargs.items() if k in sig.parameters}
+    return func(**valid_args)
 
 
 # ============== Target Sequence Generator ==============
@@ -88,113 +96,6 @@ def generate_soft_masks(num_clients, shape, mask_epsilon):
     masks = masks.view(num_clients, *shape)
 
     return masks
-
-
-# ============== Margin Attack for Watermark Generation ==============
-def margin_attack_targeted(
-    model, images, target_labels, eps, alpha, steps, mask, device, method_type="FL"
-):
-    """
-    Targeted margin attack maximizing softmax[target] - max(other softmax).
-
-    Preserves masked regions during the attack to ensure watermarks are
-    embedded only in the assigned pixel regions.
-    """
-    images = images.clone().detach().to(device)
-    ori_images = images.clone().detach()
-    target_labels = target_labels.to(device)
-    mask = mask.to(device)
-
-    images.requires_grad = True
-
-    for step in range(steps):
-        # Forward pass (method-dependent)
-        if method_type == "FL":
-            logits = model(images * (1 - mask))
-        elif method_type in ["SL", "PSL", "SFL"]:
-            smashed = model["client"](images * (1 - mask))
-            logits = model["server"](smashed)
-        else:
-            raise ValueError(f"Unknown method_type: {method_type}")
-
-        softmax = F.softmax(logits, dim=1)
-
-        # Get softmax score for target label
-        target_scores = softmax.gather(1, target_labels.view(-1, 1)).squeeze(1)
-
-        # Get max softmax score for other classes
-        one_hot = torch.zeros_like(softmax)
-        one_hot.scatter_(1, target_labels.view(-1, 1), 1.0)
-        other_scores = softmax * (1 - one_hot)
-        max_other_scores, _ = other_scores.max(dim=1)
-
-        # Loss: maximize (target_score - max_other_score)
-        loss = -(target_scores - max_other_scores).mean()
-
-        # Backward pass
-        loss.backward()
-
-        # PGD update
-        with torch.no_grad():
-            adv = images - alpha * images.grad.sign()
-            eta = torch.clamp(adv - ori_images, min=-eps, max=eps)
-            images = torch.clamp(ori_images + eta, 0, 1)
-
-            # Apply mask: preserve original values in masked region
-            images = images * (1 - mask) + ori_images * mask
-
-        images = images.detach()
-        images.requires_grad = True
-
-    return images
-
-
-def pgd_attack_targeted(
-    model, images, target_labels, eps, alpha, steps, mask, device, method_type="FL"
-):
-    """
-    Targeted PGD attack minimizing cross-entropy loss for target labels.
-
-    Preserves masked regions during the attack to ensure watermarks are
-    embedded only in the assigned pixel regions.
-    """
-    images = images.clone().detach().to(device)
-    ori_images = images.clone().detach()
-    target_labels = target_labels.to(device)
-    mask = mask.to(device)
-
-    images.requires_grad = True
-    criterion = nn.CrossEntropyLoss()
-
-    for step in range(steps):
-        # Forward pass (method-dependent)
-        if method_type == "FL":
-            logits = model(images * (1 - mask))
-        elif method_type in ["SL", "PSL", "SFL"]:
-            smashed = model["client"](images * (1 - mask))
-            logits = model["server"](smashed)
-        else:
-            raise ValueError(f"Unknown method_type: {method_type}")
-
-        # Loss: minimize cross-entropy for target label (targeted attack)
-        loss = criterion(logits, target_labels)
-
-        # Backward pass
-        loss.backward()
-
-        # PGD update (targeted: subtract gradient to minimize loss)
-        with torch.no_grad():
-            adv = images - alpha * images.grad.sign()
-            eta = torch.clamp(adv - ori_images, min=-eps, max=eps)
-            images = torch.clamp(ori_images + eta, 0, 1)
-
-            # Apply mask: preserve original values in masked region
-            images = images * (1 - mask) + ori_images * mask
-
-        images = images.detach()
-        images.requires_grad = True
-
-    return images
 
 
 # ============== Evaluation Functions ==============
@@ -292,10 +193,14 @@ def main():
     parser.add_argument("--seed", type=int, default=2026)
     parser.add_argument("--model", type=str, required=True)
     parser.add_argument("--dataset", type=str, required=True)
+    parser.add_argument("--attack_type", type=str, default="pgd", 
+                    choices=['margin', 'pgd', 'mi_fgsm', 'ni_fgsm', 'si_ni_fgsm', 'vmi_fgsm', 'emi_fgsm'],
+                    help="The watermark generation algorithm from soft_max_methods")
     args = parser.parse_args()
 
     print(f"\n{'='*50}")
     print(f"Configuration for {os.path.basename(__file__)}")
+    print(f"\nUsing attack: {args.attack_type}")
     print(f"{'='*50}")
     for arg, value in vars(args).items():
         print(f"  {arg}: {value}")
@@ -337,6 +242,9 @@ def main():
     all_masks = generate_soft_masks(args.num_clients, mask_shape, mask_epsilon=args.mask_epsilon)
     print(f"Masks shape: {all_masks.shape}")
 
+    # Get the attack function
+    attack_func = get_attack_func(args.attack_type)
+
     # Process each distributed learning method
     methods_list = ["FL", "SL", "PSL", "SFL"]
 
@@ -346,7 +254,7 @@ def main():
         print(f"{'#'*60}")
 
         # Initialize paths and result containers
-        watermark_dir = os.path.join(args.experiments_dir, "watermarks", method)
+        watermark_dir = os.path.join(args.experiments_dir, "watermarks", args.attack_type, method, )
         checkpoint_dir = os.path.join(args.experiments_dir, "checkpoints", method)
         os.makedirs(watermark_dir, exist_ok=True)
 
@@ -394,7 +302,8 @@ def main():
             mask = all_masks[client_id : client_id + 1]
 
             # Generate watermarked examples using PGD attack
-            watermarked = pgd_attack_targeted(
+            watermarked = call_attack(
+                attack_func,
                 model=model,
                 images=clean_images,
                 target_labels=target_labels,
@@ -404,6 +313,11 @@ def main():
                 mask=mask,
                 device=device,
                 method_type=method,
+                decay_factor=1.0,
+                num_scale_copies=5,
+                N=20,
+                beta=1.5,
+                eta=7.0,
             )
 
             watermarked_examples.append(watermarked.cpu())
@@ -452,6 +366,7 @@ def main():
                     "success_rates": success_rates,
                     "method": method,
                     "num_clients": args.num_clients,
+                    "attack": args.attack_type,
                 },
                 os.path.join(watermark_dir, "watermarked_examples.pt"),
             )

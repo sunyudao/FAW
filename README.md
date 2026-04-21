@@ -16,7 +16,9 @@ This repository contains the official implementation of **FAW**, the first frame
 ```
 ├── utils/
 │   ├── dataset_utils.py        # Dataset loading utilities
-│   └── model_utils.py          # Model architecture definitions
+│   ├── model_utils.py          # Model architecture definitions
+│   ├── soft_mask_watermark.py  # Watermark Generation Methods
+│   └── data_distribution.py    # Dataset Partitioning
 ├── step1_training.py           # Step 1: Distributed learning training (FL/SL/PSL/SFL)
 ├── step2_gen_watermarks.py     # Step 2: Watermark sample generation
 ├── step3_verification.py       # Step 3: Watermark verification
@@ -65,10 +67,11 @@ python step2_gen_watermarks.py \
     --cleanset_max 200 \
     --seed 2026 \
     --experiments_dir ./experiments \
-    --data_dir ./data
+    --data_dir ./data \
+    --attack_type pdg
 ```
 
-Watermark artifacts (clean set, masks, target sequences, watermarked examples) are saved to `./experiments/watermarks/{FL,SL,PSL,SFL}/`.
+Watermark artifacts (clean set, masks, target sequences, watermarked examples) are saved to `./experiments/watermarks/{margin, pgd, mi_fgsm, ni_fgsm, si_ni_fgsm, vmi_fgsm, emi_fgsm}/{FL,SL,PSL,SFL}/`.
 
 ### Step 3: Watermark Verification
 
@@ -81,6 +84,7 @@ python step3_verification.py \
     --dataset mnist \
     --experiments_dir ./experiments \
     --data_dir ./data
+    --attack_type pdg
 ```
 
 ## Quick Start

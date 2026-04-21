@@ -22,6 +22,7 @@ import argparse
 
 from utils.model_utils import get_models
 from utils.dataset_utils import get_dataset
+from utils.data_distribution import data_distribution
 
 
 # ============== Base Class ==============
@@ -540,18 +541,21 @@ class SplitFedLearning(DistributedLearningBase):
         print(f"Saved SFL global models to {checkpoint_dir}/")
 
 
-def create_client_loaders(dataset, num_clients: int, batch_size: int, iid: bool = True):
-    """Split dataset into client loaders with optional IID distribution."""
-    n = len(dataset)
-    indices = list(range(n))
-    if iid:
-        np.random.shuffle(indices)
-    splits = np.array_split(indices, num_clients)
-
+def create_client_loaders(dataset, num_clients, num_classes, batch_size, mode):
+    """
+    Split the dataset into client-specific DataLoaders using logic from data_distribution.py.
+    The 'mode' parameter supports: "equal_size_equal_class" "unequal_size_equal_class" "equal_size_unequal_class" "unequal_size_unequal_class".
+    """
+    # 1. Get indices for each client from the utility module
+    client_indices = data_distribution(dataset, num_clients, num_classes, mode)
+    
     loaders = []
-    for split in splits:
-        subset = Subset(dataset, split.tolist())
-        loaders.append(DataLoader(subset, batch_size=batch_size, shuffle=True))
+    for indices in client_indices:
+        # 2. Create a Subset for each client based on their indices
+        subset = Subset(dataset, indices)
+        # 3. Wrap the subset in a DataLoader
+        loaders.append(DataLoader(subset, batch_size=batch_size, shuffle=True, drop_last=True))
+        
     return loaders
 
 
@@ -578,6 +582,32 @@ def train_and_evaluate(
 
     return accuracy
 
+def get_num_classes(dataset):
+    """
+    Robustly detect the number of classes for different types of Torchvision datasets.
+    """
+    # Most datasets (MNIST, CIFAR10, etc.) have 'targets'
+    if hasattr(dataset, 'targets'):
+        labels = torch.tensor(dataset.targets)
+        return len(torch.unique(labels))
+    
+    # Some datasets have a 'classes' attribute (list of class names)
+    elif hasattr(dataset, 'classes'):
+        return len(dataset.classes)
+    
+    # Specific handling for GTSRB (stores data in _samples as (path, label))
+    elif hasattr(dataset, '_samples'):
+        labels = torch.tensor([s[1] for s in dataset._samples])
+        return len(torch.unique(labels))
+    
+    # Final fallback: sample the dataset to infer the number of unique labels
+    else:
+        try:
+            # We sample all labels from the dataset
+            all_labels = [dataset[j][1] for j in range(len(dataset))]
+            return len(set(all_labels))
+        except Exception as e:
+            raise AttributeError(f"Could not determine the number of classes. Error: {e}")
 
 def main():
     parser = argparse.ArgumentParser(description="Distributed Deep Learning Framework")
@@ -591,6 +621,7 @@ def main():
     parser.add_argument("--iid", choices=["true", "false"], default="true")
     parser.add_argument("--model", type=str, required=True)
     parser.add_argument("--dataset", type=str, required=True)
+    parser.add_argument("--data_distribution", type=str, default="equal_size_equal_class", choices=["equal_size_equal_class","unequal_size_equal_class","equal_size_unequal_class","unequal_size_unequal_class"])
     args = parser.parse_args()
 
     print(f"\n{'='*50}")
@@ -605,9 +636,10 @@ def main():
     print(f"Using device: {device}")
 
     train_dataset, test_dataset, num_classes = get_dataset(args.dataset, args.data_dir)
+    num_classes = get_num_classes(train_dataset)
     test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False)
     client_loaders = create_client_loaders(
-        train_dataset, args.num_clients, args.batch_size, args.iid == "true"
+        train_dataset, args.num_clients, num_classes, args.batch_size, args.data_distribution
     )
 
     global ClientModel, ServerModel, FullModel
