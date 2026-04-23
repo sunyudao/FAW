@@ -7,19 +7,15 @@ experiments_base_dir="./experiments"
 
 # Generate timestamp-based directory to store results (prevents overwriting)
 timestamp=$(date +"%Y%m%d%H%M")
-#timestamp=202604081158
 
 # Experiment configuration parameters
-# num_clients_list="10 20 40 60 80"
-# dataset_list=("mnist" "cifar10" "tiny_imagenet")
-# model_list=("lenet" "resnet18" "vgg16")
+num_clients_list="10 20 40 60 80"
+dataset_list=("mnist" "cifar10" "tiny_imagenet")
+model_list=("lenet" "resnet18" "vgg16")
 num_clients_list="20"
-dataset_list=("tiny_imagenet")
-model_list=("vgg16")
-# data_distribution_list=("equal_size_equal_class" "unequal_size_equal_class" "equal_size_unequal_class" "unequal_size_unequal_class")
-# attack_type_list=("pgd" "mi_fgsm" "ni_fgsm" "si_ni_fgsm" "vmi_fgsm" "emi_fgsm" "margin") 
-data_distribution_list=("equal_size_equal_class")
-attack_type_list=("pgd") 
+data_distribution_list=("equal_size_equal_class" "unequal_size_equal_class" "equal_size_unequal_class" "unequal_size_unequal_class")
+attack_type_list=("pgd" "mi_fgsm" "ni_fgsm" "si_ni_fgsm" "vmi_fgsm" "emi_fgsm" "margin") 
+
 
 echo -e "===== 实验标记 ===== \n ${timestamp}"
 
